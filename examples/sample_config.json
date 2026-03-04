@@ -1,0 +1,79 @@
+{
+  "width": 200,
+  "length": 150,
+  "height": 40,
+  "outer_wall": 2.0,
+  "rib_thickness": 1.6,
+  "floor_thickness": 1.2,
+  "fillet_radius": 1.5,
+  "templates": [
+    {
+      "name": "coin_cell",
+      "shape": "circle",
+      "diameter": 20,
+      "depth": 4
+    },
+    {
+      "name": "sd_card",
+      "shape": "rect",
+      "width": 24,
+      "length": 32,
+      "depth": 3
+    },
+    {
+      "name": "battery_aa",
+      "shape": "circle",
+      "diameter": 15,
+      "depth": 35
+    },
+    {
+      "name": "usb_dongle",
+      "shape": "rect",
+      "width": 20,
+      "length": 45,
+      "depth": 12
+    }
+  ],
+  "cavities": [
+    {
+      "template": "coin_cell",
+      "grid": [4, 2]
+    },
+    {
+      "template": "sd_card",
+      "grid": [3, 2]
+    },
+    {
+      "template": "battery_aa",
+      "count": 4
+    },
+    {
+      "template": "usb_dongle",
+      "count": 2
+    },
+    {
+      "template": "usb_dongle",
+      "depth": 20,
+      "count": 1
+    },
+    {
+      "shape": "circle",
+      "diameter": 10,
+      "depth": 8,
+      "count": 6
+    },
+    {
+      "shape": "rect",
+      "width": 50,
+      "length": 30,
+      "depth": 35
+    },
+    {
+      "shape": "rect",
+      "width": 15,
+      "length": 80,
+      "depth": 20,
+      "grid": [2, 1]
+    }
+  ]
+}

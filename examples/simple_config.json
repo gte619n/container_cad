@@ -1,0 +1,15 @@
+{
+  "width": 100,
+  "length": 80,
+  "height": 25,
+  "outer_wall": 2.0,
+  "rib_thickness": 1.6,
+  "floor_thickness": 1.2,
+  "fillet_radius": 1.0,
+  "cavities": [
+    {"shape": "rect", "width": 30, "length": 20, "depth": 20},
+    {"shape": "circle", "diameter": 25, "depth": 20},
+    {"shape": "rect", "width": 20, "length": 15, "depth": 15, "count": 2},
+    {"shape": "circle", "diameter": 12, "depth": 10, "count": 3}
+  ]
+}
