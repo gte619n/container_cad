@@ -16,6 +16,7 @@ from .models import (
     CavityRef,
     CavitySpec,
     ContainerConfig,
+    Layout,
     PackingResult,
     PlacedCavity,
 )
@@ -273,6 +274,124 @@ def estimate_minimum_container(
     return (fallback, fallback)
 
 
+def _center_placements(
+    placements: list[PlacedCavity],
+    inner_w: float,
+    inner_l: float,
+) -> list[PlacedCavity]:
+    """Shift all placements so their bounding box is centred in the container."""
+    if not placements:
+        return placements
+
+    min_x = min(p.x - p.spec.footprint_width / 2 for p in placements)
+    max_x = max(p.x + p.spec.footprint_width / 2 for p in placements)
+    min_y = min(p.y - p.spec.footprint_length / 2 for p in placements)
+    max_y = max(p.y + p.spec.footprint_length / 2 for p in placements)
+
+    dx = (inner_w - (max_x + min_x)) / 2
+    dy = (inner_l - (max_y + min_y)) / 2
+
+    return [PlacedCavity(x=p.x + dx, y=p.y + dy, spec=p.spec) for p in placements]
+
+
+def _even_placements(
+    placements: list[PlacedCavity],
+    inner_w: float,
+    inner_l: float,
+    rib_thickness: float,
+) -> list[PlacedCavity]:
+    """Redistribute placements with equal spacing between columns/rows and walls.
+
+    Groups cavities into columns (X-axis) and rows (Y-axis) based on the
+    packed arrangement, then spreads them evenly across the container.
+    """
+    if not placements:
+        return placements
+
+    result = list(placements)
+
+    # --- Redistribute along X (columns) ---
+    result = _redistribute_axis(result, inner_w, rib_thickness, axis="x")
+
+    # --- Redistribute along Y (rows) ---
+    result = _redistribute_axis(result, inner_l, rib_thickness, axis="y")
+
+    return result
+
+
+def _redistribute_axis(
+    placements: list[PlacedCavity],
+    inner_span: float,
+    rib_thickness: float,
+    axis: str,
+) -> list[PlacedCavity]:
+    """Redistribute placements evenly along one axis.
+
+    Groups cavities into lanes (columns for X, rows for Y) based on
+    overlapping ranges, then spaces lanes evenly.
+    """
+
+    def _pos(p: PlacedCavity) -> float:
+        return p.x if axis == "x" else p.y
+
+    def _half_extent(p: PlacedCavity) -> float:
+        return (p.spec.footprint_width if axis == "x" else p.spec.footprint_length) / 2
+
+    # Sort by position on this axis
+    sorted_indices = sorted(range(len(placements)), key=lambda i: _pos(placements[i]))
+
+    # Group into lanes: cavities whose ranges overlap are in the same lane
+    lanes: list[list[int]] = []
+    current_lane: list[int] = [sorted_indices[0]]
+    lane_max_edge = _pos(placements[sorted_indices[0]]) + _half_extent(placements[sorted_indices[0]])
+
+    for idx in sorted_indices[1:]:
+        p = placements[idx]
+        left_edge = _pos(p) - _half_extent(p)
+        if left_edge > lane_max_edge + rib_thickness / 2:
+            lanes.append(current_lane)
+            current_lane = [idx]
+            lane_max_edge = _pos(p) + _half_extent(p)
+        else:
+            current_lane.append(idx)
+            lane_max_edge = max(lane_max_edge, _pos(p) + _half_extent(p))
+    lanes.append(current_lane)
+
+    # Compute each lane's width (max footprint extent in this axis)
+    lane_widths = []
+    for lane in lanes:
+        max_footprint = max(2 * _half_extent(placements[i]) for i in lane)
+        lane_widths.append(max_footprint)
+
+    # Distribute: total gap = inner_span - sum(lane_widths)
+    # Number of gaps = N_lanes + 1 (wall-to-lane and lane-to-wall)
+    total_lane_width = sum(lane_widths)
+    n_gaps = len(lanes) + 1
+    gap = max((inner_span - total_lane_width) / n_gaps, rib_thickness / 2)
+
+    # Compute new lane centre positions
+    lane_centers = []
+    cursor = gap
+    for lw in lane_widths:
+        lane_centers.append(cursor + lw / 2)
+        cursor += lw + gap
+
+    # Compute the offset for each lane relative to its original centre
+    result = list(placements)
+    for lane, new_center in zip(lanes, lane_centers):
+        # Original lane centre = average of cavity positions in this lane
+        old_center = sum(_pos(placements[i]) for i in lane) / len(lane)
+        delta = new_center - old_center
+        for i in lane:
+            p = result[i]
+            if axis == "x":
+                result[i] = PlacedCavity(x=p.x + delta, y=p.y, spec=p.spec)
+            else:
+                result[i] = PlacedCavity(x=p.x, y=p.y + delta, spec=p.spec)
+
+    return result
+
+
 def pack_cavities(config: ContainerConfig) -> PackingResult:
     """Pack all cavities defined in *config* into the container floor.
 
@@ -346,7 +465,13 @@ def pack_cavities(config: ContainerConfig) -> PackingResult:
         cx, cy = _to_container_coords(x_bl, y_bl, item.padded_w, item.padded_l, rib_half)
         placements.append(PlacedCavity(x=cx, y=cy, spec=item.spec))
 
-    # --- 7. Utilization ---
+    # --- 7. Apply layout strategy ---
+    if config.layout == Layout.centered:
+        placements = _center_placements(placements, inner_w, inner_l)
+    elif config.layout == Layout.even:
+        placements = _even_placements(placements, inner_w, inner_l, config.rib_thickness)
+
+    # --- 8. Utilization ---
     inner_area = inner_w * inner_l
     cavity_area = sum(
         p.spec.footprint_width * p.spec.footprint_length for p in placements

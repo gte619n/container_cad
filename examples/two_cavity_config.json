@@ -6,6 +6,7 @@
   "rib_thickness": 8.5,
   "floor_thickness": 1.2,
   "fillet_radius": 1.0,
+  "layout": "even",
   "outer_fillet_upper": 2.0,
   "outer_fillet_lower": 2.0,
   "cavities": [

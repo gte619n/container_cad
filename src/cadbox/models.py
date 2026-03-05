@@ -23,6 +23,14 @@ class CavityShape(str, Enum):
     circle = "circle"
 
 
+class Layout(str, Enum):
+    """Cavity layout strategy within the container."""
+
+    packed = "packed"
+    centered = "centered"
+    even = "even"
+
+
 # ---------------------------------------------------------------------------
 # Core cavity types
 # ---------------------------------------------------------------------------
@@ -187,6 +195,10 @@ class ContainerConfig(BaseModel):
     )
     cavity_fillet_top: float = Field(
         default=0.0, ge=0, description="Default fillet radius for cavity top opening edges (mm)"
+    )
+    layout: Layout = Field(
+        default=Layout.packed,
+        description="Cavity layout strategy: 'packed' (tight), 'centered' (centered group), 'even' (equal spacing)",
     )
     templates: list[CavityTemplate] = Field(
         default_factory=list, description="Named cavity presets available for CavityRef lookups"
