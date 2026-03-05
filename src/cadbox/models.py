@@ -41,6 +41,11 @@ class CavitySpec(BaseModel):
     length: Optional[float] = Field(default=None, description="Rect only – Y dimension (mm)")
     diameter: Optional[float] = Field(default=None, description="Circle only – diameter (mm)")
     depth: float = Field(..., description="Cavity depth from top surface (mm)")
+    fillet_top: Optional[float] = Field(
+        default=None,
+        ge=0,
+        description="Fillet radius for the cavity top opening edge (mm). Overrides container-level cavity_fillet_top.",
+    )
     count: int = Field(default=1, ge=1, description="Repeat this cavity N times for the packer")
     grid: Optional[tuple[int, int]] = Field(
         default=None,
@@ -93,6 +98,11 @@ class CavityTemplate(BaseModel):
     length: Optional[float] = Field(default=None, description="Rect only – Y dimension (mm)")
     diameter: Optional[float] = Field(default=None, description="Circle only – diameter (mm)")
     depth: float = Field(..., description="Default cavity depth (mm)")
+    fillet_top: Optional[float] = Field(
+        default=None,
+        ge=0,
+        description="Fillet radius for the cavity top opening edge (mm). Overrides container-level cavity_fillet_top.",
+    )
 
     @model_validator(mode="after")
     def _validate_geometry(self) -> "CavityTemplate":
@@ -115,6 +125,11 @@ class CavityRef(BaseModel):
     template: str = Field(..., description="Name of the CavityTemplate to reference")
     depth: Optional[float] = Field(
         default=None, description="Override template depth (mm); None keeps template default"
+    )
+    fillet_top: Optional[float] = Field(
+        default=None,
+        ge=0,
+        description="Override cavity top fillet radius (mm); None keeps template/container default.",
     )
     count: int = Field(default=1, ge=1, description="Repeat this cavity N times for the packer")
     grid: Optional[tuple[int, int]] = Field(
@@ -164,6 +179,15 @@ class ContainerConfig(BaseModel):
     fillet_radius: float = Field(
         default=1.0, ge=0, description="Corner fillet radius for rectangular cavities (mm)"
     )
+    outer_fillet_upper: float = Field(
+        default=0.0, ge=0, description="Fillet radius for outer upper (top) horizontal edges (mm)"
+    )
+    outer_fillet_lower: float = Field(
+        default=0.0, ge=0, description="Fillet radius for outer lower (bottom) horizontal edges (mm)"
+    )
+    cavity_fillet_top: float = Field(
+        default=0.0, ge=0, description="Default fillet radius for cavity top opening edges (mm)"
+    )
     templates: list[CavityTemplate] = Field(
         default_factory=list, description="Named cavity presets available for CavityRef lookups"
     )
@@ -205,6 +229,7 @@ class ContainerConfig(BaseModel):
             length=tmpl.length,
             diameter=tmpl.diameter,
             depth=ref.depth if ref.depth is not None else tmpl.depth,
+            fillet_top=ref.fillet_top if ref.fillet_top is not None else tmpl.fillet_top,
             count=ref.count,
             grid=ref.grid,
         )

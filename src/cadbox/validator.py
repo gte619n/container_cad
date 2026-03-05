@@ -151,6 +151,36 @@ def validate_container(config: ContainerConfig) -> list[ValidationError]:
             )
         )
 
+    if config.outer_fillet_upper > 0 and config.outer_fillet_upper < MIN_FILLET_RADIUS:
+        errors.append(
+            ValidationError(
+                message="outer upper fillet radius is smaller than the minimum printable radius",
+                field="outer_fillet_upper",
+                value=config.outer_fillet_upper,
+                minimum=MIN_FILLET_RADIUS,
+            )
+        )
+
+    if config.outer_fillet_lower > 0 and config.outer_fillet_lower < MIN_FILLET_RADIUS:
+        errors.append(
+            ValidationError(
+                message="outer lower fillet radius is smaller than the minimum printable radius",
+                field="outer_fillet_lower",
+                value=config.outer_fillet_lower,
+                minimum=MIN_FILLET_RADIUS,
+            )
+        )
+
+    if config.cavity_fillet_top > 0 and config.cavity_fillet_top < MIN_FILLET_RADIUS:
+        errors.append(
+            ValidationError(
+                message="cavity top fillet radius is smaller than the minimum printable radius",
+                field="cavity_fillet_top",
+                value=config.cavity_fillet_top,
+                minimum=MIN_FILLET_RADIUS,
+            )
+        )
+
     # -- inner space check --------------------------------------------------
 
     inner_width = config.width - 2.0 * config.outer_wall

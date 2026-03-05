@@ -1,0 +1,27 @@
+{
+  "width": 89,
+  "length": 184,
+  "height": 55,
+  "outer_wall": 2.0,
+  "rib_thickness": 1.6,
+  "floor_thickness": 1.2,
+  "fillet_radius": 1.0,
+  "outer_fillet_upper": 2.0,
+  "outer_fillet_lower": 2.0,
+  "cavities": [
+    {
+      "shape": "rect",
+      "width": 32,
+      "length": 150,
+      "depth": 46,
+      "fillet_top": 4.0
+    },
+    {
+      "shape": "rect",
+      "width": 32,
+      "length": 165,
+      "depth": 30,
+      "fillet_top": 4.0
+    }
+  ]
+}

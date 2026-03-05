@@ -81,12 +81,27 @@ def generate(config: ContainerConfig, packing: PackingResult) -> cq.Workplane:
     )
 
     # ------------------------------------------------------------------
-    # Step 2: Fillet the four vertical (Z-parallel) edges
+    # Step 2: Fillet outer edges
     # ------------------------------------------------------------------
+    # 2a: Vertical (Z-parallel) edges
     if r_outer > 0:
         r_outer_safe = _safe_fillet_radius(r_outer, w, l)
         if r_outer_safe > 0:
             result = result.edges("|Z").fillet(r_outer_safe)
+
+    # 2b: Lower (bottom) horizontal edges – edges on the Z=0 face
+    r_lower = config.outer_fillet_lower
+    if r_lower > 0:
+        r_lower_safe = _safe_fillet_radius(r_lower, w, l, h)
+        if r_lower_safe > 0:
+            result = result.faces("<Z").edges().fillet(r_lower_safe)
+
+    # 2c: Upper (top) horizontal edges – edges on the Z=h face
+    r_upper = config.outer_fillet_upper
+    if r_upper > 0:
+        r_upper_safe = _safe_fillet_radius(r_upper, w, l, h)
+        if r_upper_safe > 0:
+            result = result.faces(">Z").edges().fillet(r_upper_safe)
 
     # ------------------------------------------------------------------
     # Step 3: Compute inner dimensions (used for coordinate conversion)
@@ -113,7 +128,7 @@ def generate(config: ContainerConfig, packing: PackingResult) -> cq.Workplane:
             y=placement.y - inner_l / 2,
             spec=placement.spec,
         )
-        result = _cut_cavity(result, adjusted, config.fillet_radius)
+        result = _cut_cavity(result, adjusted, config.fillet_radius, config.cavity_fillet_top)
 
     return result
 
@@ -122,13 +137,15 @@ def _cut_cavity(
     solid: cq.Workplane,
     placement: PlacedCavity,
     fillet_radius: float,
+    cavity_fillet_top_default: float = 0.0,
 ) -> cq.Workplane:
     """Cut a single cavity pocket into *solid* at the position given by *placement*.
 
     Args:
-        solid:         The workplane/solid to cut into.
-        placement:     Cavity position and geometry (coords in CadQuery XY-centred space).
-        fillet_radius: Requested corner fillet radius for rectangular cavities.
+        solid:                    The workplane/solid to cut into.
+        placement:                Cavity position and geometry (coords in CadQuery XY-centred space).
+        fillet_radius:            Requested corner fillet radius for rectangular cavities.
+        cavity_fillet_top_default: Container-level default fillet for cavity top edges.
 
     Returns:
         The modified solid with the cavity pocket removed.
@@ -137,6 +154,9 @@ def _cut_cavity(
     depth = spec.depth
     cx = placement.x
     cy = placement.y
+
+    # Resolve effective cavity top fillet: per-cavity override > container default
+    r_top = spec.fillet_top if spec.fillet_top is not None else cavity_fillet_top_default
 
     # Build the cut tool as a standalone solid, then subtract it.
     # This avoids CadQuery workplane state issues when chaining multiple
@@ -157,6 +177,11 @@ def _cut_cavity(
         # Fillet the bottom ring of the pocket (edges on the Z=0 face of tool)
         if r_pocket > 0:
             tool = tool.faces("<Z").edges().fillet(r_pocket)
+        # Fillet the top ring of the pocket (cavity opening edge)
+        if r_top > 0:
+            r_top_safe = _safe_fillet_radius(r_top, depth, spec.diameter)
+            if r_top_safe > 0:
+                tool = tool.faces(">Z").edges().fillet(r_top_safe)
         tool = tool.translate((0, 0, z_top - depth))
 
     elif spec.shape == CavityShape.rect:
@@ -189,6 +214,11 @@ def _cut_cavity(
         # Fillet the bottom edges of the pocket
         if r_pocket > 0:
             tool = tool.faces("<Z").edges().fillet(r_pocket)
+        # Fillet the top edges of the pocket (cavity opening edge)
+        if r_top > 0:
+            r_top_safe = _safe_fillet_radius(r_top, depth, cav_w, cav_l)
+            if r_top_safe > 0:
+                tool = tool.faces(">Z").edges().fillet(r_top_safe)
         tool = tool.translate((0, 0, z_top - depth))
     else:
         return solid
