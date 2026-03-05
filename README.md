@@ -10,7 +10,8 @@ Parametric CAD container generator for 3D printing. Define your container layout
 - **JSON-driven**: Define containers, cavities, and templates in a simple config file
 - **Auto-packing**: Bin-packing via rectpack arranges cavities with guaranteed rib gaps
 - **FDM validation**: Checks wall thickness, rib width, floor thickness, and fillet radii against 0.4mm nozzle constraints
-- **Filleted pockets**: Smooth internal corner fillets on all cavity pockets for better printability
+- **Configurable fillets**: Separate fillet control for outer upper/lower edges, cavity corners, and cavity top openings — with per-cavity overrides
+- **Layout modes**: `packed` (tight), `centered` (balanced), or `even` (equal spacing) cavity arrangement
 - **STEP + STL export**: Import directly into Bambu Studio, Fusion 360, PrusaSlicer, or any CAD/slicer
 - **Browser preview**: Built-in Three.js viewer for instant 3D preview over localhost
 - **Templates**: Named reusable cavity presets with per-reference overrides
@@ -60,6 +61,10 @@ cadbox --help
   "rib_thickness": 1.6,
   "floor_thickness": 1.2,
   "fillet_radius": 1.0,
+  "outer_fillet_upper": 1.5,
+  "outer_fillet_lower": 2.0,
+  "cavity_fillet_top": 0.8,
+  "layout": "even",
   "cavities": [
     {"shape": "rect", "width": 30, "length": 20, "depth": 20},
     {"shape": "circle", "diameter": 25, "depth": 20},
@@ -130,7 +135,11 @@ cadbox preview MODEL_FILE [--port 8123]
 | `outer_wall` | float | no | 2.0 | Wall thickness (mm) |
 | `rib_thickness` | float | no | 1.6 | Minimum gap between adjacent cavities (mm) |
 | `floor_thickness` | float | no | 1.2 | Floor thickness (mm) |
-| `fillet_radius` | float | no | 1.0 | Corner fillet radius for outer edges and cavity pockets (mm) |
+| `fillet_radius` | float | no | 1.0 | Corner fillet radius for outer vertical edges and cavity pockets (mm) |
+| `outer_fillet_upper` | float | no | 0.0 | Fillet radius for outer top horizontal edges (mm) |
+| `outer_fillet_lower` | float | no | 0.0 | Fillet radius for outer bottom horizontal edges (mm) |
+| `cavity_fillet_top` | float | no | 0.0 | Default fillet radius for cavity top opening edges (mm) |
+| `layout` | string | no | `"packed"` | Cavity layout: `"packed"`, `"centered"`, or `"even"` |
 | `templates` | array | no | [] | Named cavity presets (see below) |
 | `cavities` | array | yes | — | List of cavity specs or template references |
 
@@ -143,6 +152,7 @@ cadbox preview MODEL_FILE [--port 8123]
 | `length` | float | rect only | Y dimension (mm) |
 | `diameter` | float | circle only | Diameter (mm) |
 | `depth` | float | yes | Pocket depth from top surface (mm) |
+| `fillet_top` | float | no | — | Override cavity top opening fillet radius (mm); falls back to `cavity_fillet_top` |
 | `count` | int | no (default 1) | Number of copies to place |
 | `grid` | `[cols, rows]` | no | Arrange copies in a grid (mutually exclusive with `count`) |
 
@@ -164,7 +174,7 @@ Define reusable presets in the `templates` array:
 }
 ```
 
-Template references support overriding `depth`, `count`, and `grid`.
+Template references support overriding `depth`, `fillet_top`, `count`, and `grid`. Templates also accept `fillet_top`.
 
 ## FDM Validation Constraints
 
@@ -211,15 +221,17 @@ JSON config
 - **Solid block with pocket cuts**: The container starts as a solid block. Each cavity is cut from the top as an individual pocket. Material between pockets forms the ribs naturally.
 - **Integer-scaled packing**: rectpack requires integers, so all dimensions are multiplied by 100 (0.01mm resolution) and converted back after packing.
 - **Padded bounding boxes**: Each cavity is enlarged by `rib_thickness` before packing, guaranteeing minimum rib gaps between adjacent cavities.
-- **Pocket fillets**: All cavity pockets get filleted bottom edges for printability. The fillet radius is clamped to avoid OCCT kernel errors.
+- **Pocket fillets**: All cavity pockets get filleted bottom edges for printability. Cavity top opening fillets are applied to the solid after cutting via edge selection. All fillet radii are clamped to avoid OCCT kernel errors.
+- **Layout post-processing**: After bin-packing, placements are optionally adjusted — centered or evenly redistributed by identifying columns/rows and distributing slack.
 - **No rotation**: The bin-packer does not rotate rectangles — the user controls cavity orientation.
 
 ## Examples
 
-Two example configs are included:
+Three example configs are included:
 
-- **`examples/simple_config.json`** — 100x80x25mm box with mixed rect/circle cavities
+- **`examples/simple_config.json`** — 100x80x25mm box with mixed rect/circle cavities and outer/cavity fillets
 - **`examples/sample_config.json`** — 200x150x40mm organizer with templates (SD cards, coin cells, batteries, USB dongles)
+- **`examples/two_cavity_config.json`** — 104x195x55mm container with two large cavities, 4mm cavity top fillets, and even layout
 
 ```bash
 # Simple container
