@@ -1,9 +1,9 @@
 {
-  "width": 89,
-  "length": 184,
+  "width": 104,
+  "length": 195,
   "height": 55,
-  "outer_wall": 2.0,
-  "rib_thickness": 1.6,
+  "outer_wall": 6.0,
+  "rib_thickness": 8.5,
   "floor_thickness": 1.2,
   "fillet_radius": 1.0,
   "outer_fillet_upper": 2.0,

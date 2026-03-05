@@ -14,6 +14,8 @@ from typing import Union
 
 import cadquery as cq
 
+from cadquery import selectors
+
 from .models import CavityShape, ContainerConfig, PackingResult, PlacedCavity
 
 # ---------------------------------------------------------------------------
@@ -163,6 +165,10 @@ def _cut_cavity(
     # cutBlind operations on a progressively modified solid.
     z_top = solid.val().BoundingBox().zmax
 
+    # Extra height so the tool punches cleanly through the top surface.
+    # This ensures crisp opening edges that can be filleted on the solid.
+    overshoot = max(r_top, 0.1)
+
     # Clamp the pocket fillet to at most half the depth (the vertical edge)
     # and half the smallest lateral dimension.
     if spec.shape == CavityShape.circle:
@@ -172,17 +178,13 @@ def _cut_cavity(
             cq.Workplane("XY")
             .center(cx, cy)
             .circle(radius)
-            .extrude(depth)
+            .extrude(depth + overshoot)
         )
         # Fillet the bottom ring of the pocket (edges on the Z=0 face of tool)
         if r_pocket > 0:
             tool = tool.faces("<Z").edges().fillet(r_pocket)
-        # Fillet the top ring of the pocket (cavity opening edge)
-        if r_top > 0:
-            r_top_safe = _safe_fillet_radius(r_top, depth, spec.diameter)
-            if r_top_safe > 0:
-                tool = tool.faces(">Z").edges().fillet(r_top_safe)
         tool = tool.translate((0, 0, z_top - depth))
+        hw, hl = radius, radius
 
     elif spec.shape == CavityShape.rect:
         cav_w = spec.width   # type: ignore[assignment]
@@ -202,28 +204,42 @@ def _cut_cavity(
                 .vertices()
                 .fillet(r_corner)
                 .finalize()
-                .extrude(depth)
+                .extrude(depth + overshoot)
             )
         else:
             tool = (
                 cq.Workplane("XY")
                 .center(cx, cy)
                 .rect(cav_w, cav_l)
-                .extrude(depth)
+                .extrude(depth + overshoot)
             )
         # Fillet the bottom edges of the pocket
         if r_pocket > 0:
             tool = tool.faces("<Z").edges().fillet(r_pocket)
-        # Fillet the top edges of the pocket (cavity opening edge)
-        if r_top > 0:
-            r_top_safe = _safe_fillet_radius(r_top, depth, cav_w, cav_l)
-            if r_top_safe > 0:
-                tool = tool.faces(">Z").edges().fillet(r_top_safe)
         tool = tool.translate((0, 0, z_top - depth))
+        hw, hl = cav_w / 2, cav_l / 2
     else:
         return solid
 
-    return solid.cut(tool)
+    result = solid.cut(tool)
+
+    # Apply cavity top fillet on the solid after cutting.
+    # Select edges at the cavity opening using a BoxSelector centred on the
+    # cavity position at z_top.
+    if r_top > 0:
+        r_top_safe = _safe_fillet_radius(r_top, depth, 2 * hw, 2 * hl)
+        if r_top_safe > 0:
+            tol = 0.5
+            sel = selectors.BoxSelector(
+                (cx - hw - tol, cy - hl - tol, z_top - tol),
+                (cx + hw + tol, cy + hl + tol, z_top + tol),
+            )
+            try:
+                result = result.edges(sel).fillet(r_top_safe)
+            except Exception:
+                pass  # skip if geometry cannot support the fillet
+
+    return result
 
 
 # ---------------------------------------------------------------------------

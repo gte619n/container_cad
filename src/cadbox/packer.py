@@ -101,6 +101,7 @@ def _expand_cavities(config: ContainerConfig) -> list[CavitySpec]:
             length=spec.length,
             diameter=spec.diameter,
             depth=spec.depth,
+            fillet_top=spec.fillet_top,
             count=1,
             grid=None,
         )
