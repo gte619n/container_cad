@@ -1,209 +1,55 @@
-"""Minimal web preview server for cadbox STEP/STL files.
+"""Web application server for cadbox.
 
-Serves an embedded Three.js viewer over localhost HTTP and auto-opens
-the browser.  No external Python dependencies required - Three.js is
-loaded from a CDN.
+Serves the full cadbox UI with REST API endpoints for config management
+and container generation. Binds to 0.0.0.0:8085 by default with optional
+SSL support (designed for use behind Tailscale HTTPS).
 """
 
 from __future__ import annotations
 
+import json
+import ssl
+import tempfile
 import threading
+import traceback
 import webbrowser
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
+from typing import Any
+from urllib.parse import unquote
+
+from . import storage
+from .ui import HTML_TEMPLATE
 
 # ---------------------------------------------------------------------------
-# Embedded HTML page
+# Globals for the current model
 # ---------------------------------------------------------------------------
 
-_HTML_TEMPLATE = """\
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>cadbox preview</title>
-  <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { background: #1a1a2e; overflow: hidden; }
-    canvas { display: block; }
-    #info {
-      position: absolute;
-      top: 12px;
-      left: 50%;
-      transform: translateX(-50%);
-      color: #aab4d4;
-      font-family: monospace;
-      font-size: 13px;
-      background: rgba(0,0,0,0.45);
-      padding: 4px 14px;
-      border-radius: 4px;
-      pointer-events: none;
-      white-space: nowrap;
-    }
-  </style>
-</head>
-<body>
-  <div id="info">cadbox &mdash; drag to rotate &nbsp;|&nbsp; scroll to zoom &nbsp;|&nbsp; right-drag to pan</div>
+_current_stl: Path | None = None
+_current_step: Path | None = None
+_model_lock = threading.Lock()
 
-  <!-- Three.js r158 (ES module build) -->
-  <script type="importmap">
-  {
-    "imports": {
-      "three": "https://cdn.jsdelivr.net/npm/three@0.158.0/build/three.module.js",
-      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.158.0/examples/jsm/"
-    }
-  }
-  </script>
 
-  <script type="module">
-    import * as THREE from 'three';
-    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-    import { STLLoader } from 'three/addons/loaders/STLLoader.js';
+def _set_current_stl(path: Path) -> None:
+    global _current_stl
+    with _model_lock:
+        _current_stl = path
 
-    // -----------------------------------------------------------------------
-    // Scene setup
-    // -----------------------------------------------------------------------
-    const renderer = new THREE.WebGLRenderer({ antialias: true });
-    renderer.setPixelRatio(window.devicePixelRatio);
-    renderer.setSize(window.innerWidth, window.innerHeight);
-    renderer.shadowMap.enabled = true;
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-    document.body.appendChild(renderer.domElement);
 
-    const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x1a1a2e);
+def _get_current_stl() -> Path | None:
+    with _model_lock:
+        return _current_stl
 
-    const camera = new THREE.PerspectiveCamera(
-      45,
-      window.innerWidth / window.innerHeight,
-      0.1,
-      10000
-    );
-    camera.position.set(150, 120, 200);
 
-    // -----------------------------------------------------------------------
-    // Lighting
-    // -----------------------------------------------------------------------
-    const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
-    scene.add(ambientLight);
+def _set_current_step(path: Path) -> None:
+    global _current_step
+    with _model_lock:
+        _current_step = path
 
-    const dirLight = new THREE.DirectionalLight(0xffffff, 1.2);
-    dirLight.position.set(200, 300, 200);
-    dirLight.castShadow = true;
-    dirLight.shadow.mapSize.set(2048, 2048);
-    dirLight.shadow.camera.near = 1;
-    dirLight.shadow.camera.far = 2000;
-    dirLight.shadow.camera.left = -300;
-    dirLight.shadow.camera.right = 300;
-    dirLight.shadow.camera.top = 300;
-    dirLight.shadow.camera.bottom = -300;
-    scene.add(dirLight);
 
-    const fillLight = new THREE.DirectionalLight(0x8899cc, 0.4);
-    fillLight.position.set(-100, 50, -150);
-    scene.add(fillLight);
-
-    // -----------------------------------------------------------------------
-    // Controls
-    // -----------------------------------------------------------------------
-    const controls = new OrbitControls(camera, renderer.domElement);
-    controls.enableDamping = true;
-    controls.dampingFactor = 0.08;
-    controls.screenSpacePanning = true;
-    controls.minDistance = 5;
-    controls.maxDistance = 5000;
-
-    // -----------------------------------------------------------------------
-    // Grid helper (floor plane)
-    // -----------------------------------------------------------------------
-    const grid = new THREE.GridHelper(500, 50, 0x334466, 0x223355);
-    grid.position.y = 0;
-    scene.add(grid);
-
-    // -----------------------------------------------------------------------
-    // STL model
-    // -----------------------------------------------------------------------
-    const material = new THREE.MeshStandardMaterial({
-      color: 0x8899aa,
-      metalness: 0.25,
-      roughness: 0.55,
-      side: THREE.DoubleSide,
-    });
-
-    const loader = new STLLoader();
-    loader.load(
-      '/model.stl',
-      (geometry) => {
-        geometry.computeVertexNormals();
-
-        const mesh = new THREE.Mesh(geometry, material);
-        mesh.castShadow = true;
-        mesh.receiveShadow = true;
-        scene.add(mesh);
-
-        // Auto-fit camera to model bounds
-        geometry.computeBoundingBox();
-        const box = geometry.boundingBox;
-        const center = new THREE.Vector3();
-        box.getCenter(center);
-        const size = new THREE.Vector3();
-        box.getSize(size);
-
-        const maxDim = Math.max(size.x, size.y, size.z);
-        const fov = camera.fov * (Math.PI / 180);
-        const distance = (maxDim / 2) / Math.tan(fov / 2) * 2.0;
-
-        // Reposition mesh so it sits on the grid
-        mesh.position.set(-center.x, -box.min.y, -center.z);
-
-        // Update grid to model footprint size
-        grid.scale.setScalar(Math.max(maxDim / 200, 1));
-
-        // Orbit target at model base centre
-        controls.target.set(0, size.y / 2, 0);
-
-        camera.position.set(
-          distance * 0.4,
-          distance * 0.9,
-          distance * 0.5
-        );
-        camera.near = distance * 0.001;
-        camera.far = distance * 20;
-        camera.updateProjectionMatrix();
-        controls.update();
-      },
-      undefined,
-      (err) => {
-        console.error('Failed to load STL:', err);
-        const div = document.getElementById('info');
-        div.style.color = '#ff6b6b';
-        div.textContent = 'Failed to load model. Check browser console for details.';
-      }
-    );
-
-    // -----------------------------------------------------------------------
-    // Resize handling
-    // -----------------------------------------------------------------------
-    window.addEventListener('resize', () => {
-      camera.aspect = window.innerWidth / window.innerHeight;
-      camera.updateProjectionMatrix();
-      renderer.setSize(window.innerWidth, window.innerHeight);
-    });
-
-    // -----------------------------------------------------------------------
-    // Render loop
-    // -----------------------------------------------------------------------
-    function animate() {
-      requestAnimationFrame(animate);
-      controls.update();
-      renderer.render(scene, camera);
-    }
-    animate();
-  </script>
-</body>
-</html>
-"""
+def _get_current_step() -> Path | None:
+    with _model_lock:
+        return _current_step
 
 
 # ---------------------------------------------------------------------------
@@ -211,48 +57,233 @@ _HTML_TEMPLATE = """\
 # ---------------------------------------------------------------------------
 
 
-def _make_handler(model_path: Path, html: str) -> type[BaseHTTPRequestHandler]:
-    """Return a request handler class closed over the model path and HTML."""
+def _make_handler(initial_stl: Path | None = None) -> type[BaseHTTPRequestHandler]:
+    """Return a request handler class with REST API endpoints."""
+
+    if initial_stl:
+        _set_current_stl(initial_stl)
 
     class _Handler(BaseHTTPRequestHandler):
         def log_message(self, format: str, *args: object) -> None:  # noqa: A002
-            # Suppress default request logging to keep the terminal clean.
             pass
 
+        # -- Routing --------------------------------------------------------
+
         def do_GET(self) -> None:  # noqa: N802
-            if self.path == "/" or self.path == "/index.html":
+            path = self.path.split("?")[0]
+
+            if path == "/" or path == "/index.html":
                 self._serve_html()
-            elif self.path == "/model.stl":
+            elif path == "/model.stl":
                 self._serve_stl()
+            elif path == "/api/configs":
+                self._api_list_configs()
+            elif path.startswith("/api/configs/"):
+                name = unquote(path[len("/api/configs/"):])
+                self._api_get_config(name)
+            elif path == "/download/step":
+                self._serve_download("step")
+            elif path == "/download/stl":
+                self._serve_download("stl")
             else:
-                self.send_error(404, "Not Found")
+                self.send_error(404)
+
+        def do_POST(self) -> None:  # noqa: N802
+            path = self.path.split("?")[0]
+
+            if path == "/api/generate":
+                self._api_generate()
+            elif path == "/api/validate":
+                self._api_validate()
+            elif path.startswith("/api/configs/"):
+                name = unquote(path[len("/api/configs/"):])
+                self._api_save_config(name)
+            else:
+                self.send_error(404)
+
+        def do_DELETE(self) -> None:  # noqa: N802
+            path = self.path.split("?")[0]
+
+            if path.startswith("/api/configs/"):
+                name = unquote(path[len("/api/configs/"):])
+                self._api_delete_config(name)
+            else:
+                self.send_error(404)
+
+        # -- Static ---------------------------------------------------------
 
         def _serve_html(self) -> None:
-            body = html.encode("utf-8")
+            body = HTML_TEMPLATE.encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
-            self._cors_headers()
+            self._common_headers()
             self.end_headers()
             self.wfile.write(body)
 
         def _serve_stl(self) -> None:
-            try:
-                data = model_path.read_bytes()
-            except OSError as exc:
-                self.send_error(500, f"Cannot read model file: {exc}")
+            stl_path = _get_current_stl()
+            if stl_path is None or not stl_path.exists():
+                self.send_error(404, "No model generated yet")
                 return
+            data = stl_path.read_bytes()
             self.send_response(200)
             self.send_header("Content-Type", "model/stl")
             self.send_header("Content-Length", str(len(data)))
-            self._cors_headers()
+            self._common_headers()
             self.end_headers()
             self.wfile.write(data)
 
-        def _cors_headers(self) -> None:
+        def _serve_download(self, fmt: str) -> None:
+            if fmt == "step":
+                fpath = _get_current_step()
+                ctype = "application/step"
+                ext = "step"
+            else:
+                fpath = _get_current_stl()
+                ctype = "model/stl"
+                ext = "stl"
+            if fpath is None or not fpath.exists():
+                self.send_error(404, f"No {fmt.upper()} file generated yet")
+                return
+            data = fpath.read_bytes()
+            self.send_response(200)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header(
+                "Content-Disposition", f'attachment; filename="cadbox-output.{ext}"'
+            )
+            self._common_headers()
+            self.end_headers()
+            self.wfile.write(data)
+
+        # -- Config CRUD API ------------------------------------------------
+
+        def _api_list_configs(self) -> None:
+            configs = storage.list_configs()
+            self._json_response(configs)
+
+        def _api_get_config(self, name: str) -> None:
+            try:
+                data = storage.load_config(name)
+                self._json_response(data)
+            except FileNotFoundError:
+                self._json_error(404, f"Config '{name}' not found")
+
+        def _api_save_config(self, name: str) -> None:
+            body = self._read_json_body()
+            if body is None:
+                return
+            storage.save_config(name, body)
+            self._json_response({"ok": True})
+
+        def _api_delete_config(self, name: str) -> None:
+            try:
+                storage.delete_config(name)
+                self._json_response({"ok": True})
+            except FileNotFoundError:
+                self._json_error(404, f"Config '{name}' not found")
+
+        # -- Generate API ---------------------------------------------------
+
+        def _api_generate(self) -> None:
+            body = self._read_json_body()
+            if body is None:
+                return
+
+            try:
+                from cadbox.config import ConfigError, load_config_from_string
+                from cadbox.generator import export_step, export_stl, generate
+                from cadbox.packer import PackingError, pack_cavities
+                from cadbox.validator import CadboxValidationError, validate_all
+
+                import sys
+                print(f"[generate] request body: {json.dumps(body, indent=2)}", flush=True)
+                sys.stderr.write(f"[generate] width={body.get('width')} length={body.get('length')} cavities={len(body.get('cavities',[]))}\n")
+                sys.stderr.flush()
+                config = load_config_from_string(json.dumps(body))
+                validate_all(config)
+                packing = pack_cavities(config)
+
+                solid = generate(config, packing)
+
+                tmpdir = Path(tempfile.gettempdir())
+                stl_path = tmpdir / "cadbox_preview.stl"
+                step_path = tmpdir / "cadbox_preview.step"
+                export_stl(solid, stl_path)
+                export_step(solid, step_path)
+                _set_current_stl(stl_path)
+                _set_current_step(step_path)
+
+                self._json_response({
+                    "ok": True,
+                    "placements": len(packing.placements),
+                    "utilization": round(packing.utilization * 100, 1),
+                })
+
+            except ConfigError as exc:
+                self._json_error(400, str(exc))
+            except CadboxValidationError as exc:
+                self._json_error(400, str(exc))
+            except PackingError as exc:
+                self._json_error(400, f"{exc.message} Suggestion: {exc.suggestion}")
+            except Exception as exc:
+                self._json_error(500, f"Generation failed: {exc}\n{traceback.format_exc()}")
+
+        # -- Validate API ---------------------------------------------------
+
+        def _api_validate(self) -> None:
+            body = self._read_json_body()
+            if body is None:
+                return
+
+            try:
+                from cadbox.config import ConfigError, load_config_from_string
+                from cadbox.validator import CadboxValidationError, validate_all
+
+                config = load_config_from_string(json.dumps(body))
+                validate_all(config)
+                self._json_response({"valid": True, "errors": []})
+
+            except ConfigError as exc:
+                self._json_response({"valid": False, "errors": [str(exc)]})
+            except CadboxValidationError as exc:
+                self._json_response({
+                    "valid": False,
+                    "errors": [str(e) for e in exc.errors],
+                })
+            except Exception as exc:
+                self._json_response({"valid": False, "errors": [str(exc)]})
+
+        # -- Helpers --------------------------------------------------------
+
+        def _read_json_body(self) -> dict | None:
+            length = int(self.headers.get("Content-Length", 0))
+            if length == 0:
+                self._json_error(400, "Empty request body")
+                return None
+            raw = self.rfile.read(length)
+            try:
+                return json.loads(raw)
+            except json.JSONDecodeError as exc:
+                self._json_error(400, f"Invalid JSON: {exc}")
+                return None
+
+        def _json_response(self, data: Any, status: int = 200) -> None:
+            body = json.dumps(data).encode("utf-8")
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self._common_headers()
+            self.end_headers()
+            self.wfile.write(body)
+
+        def _json_error(self, status: int, message: str) -> None:
+            self._json_response({"error": message}, status=status)
+
+        def _common_headers(self) -> None:
             self.send_header("Access-Control-Allow-Origin", "*")
-            self.send_header("Cache-Control", "no-store, no-cache, must-revalidate")
-            self.send_header("Pragma", "no-cache")
+            self.send_header("Cache-Control", "no-store")
 
     return _Handler
 
@@ -262,39 +293,62 @@ def _make_handler(model_path: Path, html: str) -> type[BaseHTTPRequestHandler]:
 # ---------------------------------------------------------------------------
 
 
-def launch_preview(stl_path: str | Path, port: int = 8123) -> None:
-    """Start a local HTTP server and open the 3-D STL viewer in the browser.
+def launch_preview(
+    stl_path: str | Path | None = None,
+    port: int = 8085,
+    host: str = "0.0.0.0",
+    ssl_certfile: str | None = None,
+    ssl_keyfile: str | None = None,
+    open_browser: bool = True,
+) -> None:
+    """Start the cadbox web UI server.
 
     Args:
-        stl_path: Path to the STL (or STEP) file to preview.
-        port:     Local TCP port for the HTTP server (default 8123).
-
-    The function blocks until the user presses Ctrl-C.
+        stl_path:       Optional initial STL file to display.
+        port:           TCP port (default 8085).
+        host:           Bind address (default 0.0.0.0 for Tailscale access).
+        ssl_certfile:   Path to SSL certificate file (PEM). If provided with
+                        ssl_keyfile, the server will use HTTPS.
+        ssl_keyfile:    Path to SSL private key file (PEM).
+        open_browser:   Whether to auto-open the browser.
     """
-    stl_path = Path(stl_path)
-    if not stl_path.exists():
-        raise FileNotFoundError(f"Model file not found: {stl_path}")
+    initial_stl = None
+    if stl_path is not None:
+        initial_stl = Path(stl_path)
+        if not initial_stl.exists():
+            raise FileNotFoundError(f"Model file not found: {initial_stl}")
 
-    html = _HTML_TEMPLATE  # already formatted; no substitutions needed
+    handler_class = _make_handler(initial_stl)
 
-    handler_class = _make_handler(stl_path, html)
-    server = HTTPServer(("127.0.0.1", port), handler_class)
+    class _ReusableHTTPServer(HTTPServer):
+        allow_reuse_address = True
 
-    url = f"http://localhost:{port}"
-    print(f"Preview server running at {url}  (Ctrl-C to stop)")
+    server = _ReusableHTTPServer((host, port), handler_class)
 
-    # Open browser slightly after server starts.
-    def _open_browser() -> None:
-        webbrowser.open(url)
+    # SSL wrapping (Tailscale provides the actual certificates)
+    if ssl_certfile and ssl_keyfile:
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        ctx.load_cert_chain(certfile=ssl_certfile, keyfile=ssl_keyfile)
+        server.socket = ctx.wrap_socket(server.socket, server_side=True)
+        scheme = "https"
+    else:
+        scheme = "http"
 
-    timer = threading.Timer(0.4, _open_browser)
-    timer.daemon = True
-    timer.start()
+    display_host = "localhost" if host == "0.0.0.0" else host
+    url = f"{scheme}://{display_host}:{port}"
+    print(f"cadbox server running at {url}  (Ctrl-C to stop)")
+    print(f"  Listening on {host}:{port}")
+    if ssl_certfile:
+        print(f"  SSL enabled (cert: {ssl_certfile})")
+
+    if open_browser:
+        timer = threading.Timer(0.4, lambda: webbrowser.open(url))
+        timer.daemon = True
+        timer.start()
 
     try:
         server.serve_forever()
     except KeyboardInterrupt:
         pass
     finally:
-        timer.cancel()
         server.server_close()

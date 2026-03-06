@@ -190,7 +190,6 @@ def _to_container_coords(
     y_bl: int,
     padded_w: int,
     padded_l: int,
-    rib_half: float,
 ) -> tuple[float, float]:
     """Convert a rectpack bottom-left position to inner-floor coordinates.
 
@@ -198,17 +197,12 @@ def _to_container_coords(
     container coordinate space where ``(0, 0)`` is the **bottom-left corner**
     of the inner floor.
 
-    The effective bin is inset by ``rib_half`` (half the rib thickness) from
-    the inner walls so that outermost cavities maintain a half-rib gap.
-
-    Within the effective bin, the padded rectangle's centre is:
-
-        cavity_centre_in_bin = (x_bl + padded_w/2, y_bl + padded_l/2)
-
-    Shifting back to inner-floor space adds the rib_half offset.
+    Each padded rectangle already includes ``rib_thickness`` of padding, so
+    edge cavities naturally sit ``rib_thickness / 2`` from the bin boundary
+    (which corresponds to the inner wall).  No additional offset is needed.
     """
-    cx_mm = rib_half + _to_mm(x_bl + padded_w / 2)
-    cy_mm = rib_half + _to_mm(y_bl + padded_l / 2)
+    cx_mm = _to_mm(x_bl + padded_w / 2)
+    cy_mm = _to_mm(y_bl + padded_l / 2)
 
     return cx_mm, cy_mm
 
@@ -242,36 +236,33 @@ def estimate_minimum_container(
 
     items = _build_items(cavities, rib_thickness)
 
-    # Total padded area gives a lower bound
-    total_area = sum(i.padded_w * i.padded_l for i in items)
-    side = max(
-        _to_mm(max(i.padded_w for i in items)),
-        _to_mm(max(i.padded_l for i in items)),
-        math.sqrt(_to_mm(total_area)),
-    )
+    # Sum of padded widths and max padded length give a good rectangular start
+    total_padded_w = sum(_to_mm(i.padded_w) for i in items)
+    max_padded_w = _to_mm(max(i.padded_w for i in items))
+    max_padded_l = _to_mm(max(i.padded_l for i in items))
 
-    # Wall padding that must be subtracted from outer size to get bin size
-    wall_padding_mm = 2 * outer_wall + rib_thickness  # rib_thickness for the half-rib at edges
+    # Try rectangular bins: start from (sum_of_widths, max_length) and grow
+    start_w = max(max_padded_w, 1.0)
+    start_l = max(max_padded_l, 1.0)
 
-    step = 5.0  # mm growth per iteration
-    max_iter = 200
+    step = 1.0  # mm growth per iteration
+    max_iter = 500
 
+    # Strategy: grow width from minimum, keep length at max needed
+    w = start_w
     for _ in range(max_iter):
-        inner_w = side
-        inner_l = side
-        bin_w = _to_int(inner_w - rib_thickness)
-        bin_l = _to_int(inner_l - rib_thickness)
+        bin_w = _to_int(w)
+        bin_l = _to_int(start_l)
         if bin_w > 0 and bin_l > 0:
             result = _run_rectpack(items, bin_w, bin_l)
             if result is not None:
-                outer_w = inner_w + wall_padding_mm - rib_thickness
-                outer_l = inner_l + wall_padding_mm - rib_thickness
-                return (outer_w, outer_l)
-        side += step
+                return (w + 2 * outer_wall, start_l + 2 * outer_wall)
+        w += step
 
     # Fallback: return a generous estimate
-    fallback = side + wall_padding_mm
-    return (fallback, fallback)
+    fallback_w = w + 2 * outer_wall
+    fallback_l = start_l + 2 * outer_wall
+    return (fallback_w, fallback_l)
 
 
 def _center_placements(
@@ -428,14 +419,13 @@ def pack_cavities(config: ContainerConfig) -> PackingResult:
     # --- 3. Padded items ---
     items = _build_items(specs, config.rib_thickness)
 
-    # --- 4. Effective bin size ---
-    # We shrink by rib_thickness on the total span (rib_thickness/2 each side)
-    # to keep edge cavities a full half-rib away from the inner wall.
-    eff_w = inner_w - config.rib_thickness
-    eff_l = inner_l - config.rib_thickness
-
-    bin_w = _to_int(eff_w)
-    bin_l = _to_int(eff_l)
+    # --- 4. Bin size ---
+    # The bin matches the inner dimensions exactly.  Each cavity's padded
+    # bounding box already includes rib_thickness, so edge cavities end up
+    # rib_thickness/2 from the inner wall and adjacent cavities have a full
+    # rib_thickness gap between them.
+    bin_w = _to_int(inner_w)
+    bin_l = _to_int(inner_l)
 
     if bin_w <= 0 or bin_l <= 0:
         min_w, min_l = estimate_minimum_container(specs, config.outer_wall, config.rib_thickness)
@@ -459,10 +449,9 @@ def pack_cavities(config: ContainerConfig) -> PackingResult:
         )
 
     # --- 6. Convert to container coordinates ---
-    rib_half = config.rib_thickness / 2.0
     placements: list[PlacedCavity] = []
     for x_bl, y_bl, item in packed:
-        cx, cy = _to_container_coords(x_bl, y_bl, item.padded_w, item.padded_l, rib_half)
+        cx, cy = _to_container_coords(x_bl, y_bl, item.padded_w, item.padded_l)
         placements.append(PlacedCavity(x=cx, y=cy, spec=item.spec))
 
     # --- 7. Apply layout strategy ---

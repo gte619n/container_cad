@@ -31,6 +31,22 @@ class Layout(str, Enum):
     even = "even"
 
 
+class BoxType(str, Enum):
+    """Top-level box construction mode."""
+
+    custom = "custom"
+    gridfinity = "gridfinity"
+
+
+class StackingMode(str, Enum):
+    """Stacking feature configuration."""
+
+    none = "none"
+    receiver = "receiver"  # top rim receives the box above
+    stacker = "stacker"    # bottom step sits in receiver below
+    both = "both"          # has both features
+
+
 # ---------------------------------------------------------------------------
 # Core cavity types
 # ---------------------------------------------------------------------------
@@ -178,9 +194,15 @@ class ContainerConfig(BaseModel):
     resolve against ``templates``.
     """
 
-    width: float = Field(..., gt=0, description="Outer width (X) in mm")
-    length: float = Field(..., gt=0, description="Outer length (Y) in mm")
-    height: float = Field(..., gt=0, description="Outer height (Z) in mm")
+    # -- Box type -----------------------------------------------------------
+    box_type: BoxType = Field(default=BoxType.custom, description="Box construction mode")
+
+    # -- Dimensions (required for custom; computed for gridfinity) ----------
+    width: Optional[float] = Field(default=None, gt=0, description="Outer width (X) in mm")
+    length: Optional[float] = Field(default=None, gt=0, description="Outer length (Y) in mm")
+    height: Optional[float] = Field(default=None, gt=0, description="Outer height (Z) in mm")
+
+    # -- Structural ---------------------------------------------------------
     outer_wall: float = Field(default=2.0, gt=0, description="Wall thickness (mm)")
     rib_thickness: float = Field(default=1.6, gt=0, description="Internal rib thickness (mm)")
     floor_thickness: float = Field(default=1.2, gt=0, description="Floor thickness (mm)")
@@ -200,6 +222,33 @@ class ContainerConfig(BaseModel):
         default=Layout.packed,
         description="Cavity layout strategy: 'packed' (tight), 'centered' (centered group), 'even' (equal spacing)",
     )
+
+    # -- Stacking -----------------------------------------------------------
+    stacking: StackingMode = Field(
+        default=StackingMode.none, description="Stacking feature mode"
+    )
+    stacking_shelf_depth: float = Field(
+        default=2.0, gt=0, description="Width of the stacking rim/step (mm)"
+    )
+    stacking_shelf_height: float = Field(
+        default=3.5, gt=0, description="Height of the stacking rim/step (mm)"
+    )
+    stacking_clearance: float = Field(
+        default=0.3, ge=0, description="Horizontal clearance for stacking fit (mm per side)"
+    )
+    stacking_chamfer: float = Field(
+        default=0.5, ge=0, description="Lead-in chamfer on stacking features (mm)"
+    )
+
+    # -- Gridfinity ---------------------------------------------------------
+    grid_units_x: int = Field(default=1, ge=1, description="Gridfinity grid units along X")
+    grid_units_y: int = Field(default=1, ge=1, description="Gridfinity grid units along Y")
+    height_units: int = Field(default=3, ge=1, description="Gridfinity height units (7mm each)")
+    gridfinity_magnets: bool = Field(
+        default=False, description="Add magnet holes to gridfinity base"
+    )
+
+    # -- Cavities -----------------------------------------------------------
     templates: list[CavityTemplate] = Field(
         default_factory=list, description="Named cavity presets available for CavityRef lookups"
     )
@@ -208,8 +257,27 @@ class ContainerConfig(BaseModel):
     )
 
     @model_validator(mode="after")
-    def _resolve_refs(self) -> "ContainerConfig":
-        """Validate that every CavityRef names an existing template."""
+    def _resolve_refs_and_dims(self) -> "ContainerConfig":
+        """Validate refs and compute dimensions for gridfinity mode."""
+        # -- Gridfinity dimension computation --------------------------------
+        if self.box_type == BoxType.gridfinity:
+            # 42mm grid pitch, 0.5mm total clearance
+            self.width = self.grid_units_x * 42.0 - 0.5
+            self.length = self.grid_units_y * 42.0 - 0.5
+            # Height = base (7mm) + height_units * 7mm + stacking lip (4.4mm)
+            self.height = 7.0 + self.height_units * 7.0 + 4.4
+            # Gridfinity standard wall thickness
+            self.outer_wall = 0.95
+            self.floor_thickness = 7.0  # base profile height
+            self.fillet_radius = 0.8
+        else:
+            # Custom mode requires explicit dimensions
+            if self.width is None or self.length is None or self.height is None:
+                raise ValueError(
+                    "Custom box type requires 'width', 'length', and 'height'."
+                )
+
+        # -- Validate CavityRef targets ------------------------------------
         template_map: dict[str, CavityTemplate] = {t.name: t for t in self.templates}
         for entry in self.cavities:
             if isinstance(entry, CavityRef):

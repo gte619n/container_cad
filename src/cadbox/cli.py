@@ -199,6 +199,65 @@ def _launch_preview_for_solid(solid: "cq.Workplane", step_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# serve command  (full web UI)
+# ---------------------------------------------------------------------------
+
+
+@main.command("serve")
+@click.option(
+    "--port",
+    default=8085,
+    show_default=True,
+    type=int,
+    help="TCP port for the web UI server.",
+)
+@click.option(
+    "--host",
+    default="0.0.0.0",
+    show_default=True,
+    help="Bind address (0.0.0.0 for network/Tailscale access).",
+)
+@click.option(
+    "--ssl-cert",
+    default=None,
+    type=click.Path(exists=True, dir_okay=False),
+    help="Path to SSL certificate file (PEM) for HTTPS.",
+)
+@click.option(
+    "--ssl-key",
+    default=None,
+    type=click.Path(exists=True, dir_okay=False),
+    help="Path to SSL private key file (PEM) for HTTPS.",
+)
+@click.option(
+    "--no-browser",
+    is_flag=True,
+    default=False,
+    help="Don't auto-open the browser.",
+)
+def serve_cmd(
+    port: int,
+    host: str,
+    ssl_cert: str | None,
+    ssl_key: str | None,
+    no_browser: bool,
+) -> None:
+    """Launch the cadbox web UI with config editor and 3D preview."""
+    from cadbox.preview.server import launch_preview
+
+    try:
+        launch_preview(
+            port=port,
+            host=host,
+            ssl_certfile=ssl_cert,
+            ssl_keyfile=ssl_key,
+            open_browser=not no_browser,
+        )
+    except KeyboardInterrupt:
+        pass
+
+
+# ---------------------------------------------------------------------------
 # preview command
 # ---------------------------------------------------------------------------
 
@@ -210,7 +269,7 @@ def _launch_preview_for_solid(solid: "cq.Workplane", step_path: Path) -> None:
 )
 @click.option(
     "--port",
-    default=8123,
+    default=8085,
     show_default=True,
     type=int,
     help="Local port for the preview HTTP server.",
