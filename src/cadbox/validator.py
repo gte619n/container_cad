@@ -22,6 +22,7 @@ MIN_FLOOR_THICKNESS: float = 0.8  # 2× nozzle
 MIN_FEATURE_SIZE: float = 1.8     # smallest printable feature
 MIN_FILLET_RADIUS: float = 0.5
 MIN_CAVITY_DIMENSION: float = 2.0  # smallest printable hole/opening
+MIN_FINGER_PULL_RADIUS: float = 3.0  # mm – smaller scoops don't help fingers
 _TOLERANCE: float = 0.01  # mm – float-comparison tolerance for placement checks
 
 
@@ -269,7 +270,64 @@ def validate_container(config: ContainerConfig) -> list[ValidationError]:
                     )
                 )
 
+    # -- finger pull checks (hard errors only) --------------------------------
+
+    if config.finger_pull_radius > 0:
+        if config.finger_pull_radius < MIN_FINGER_PULL_RADIUS:
+            errors.append(
+                ValidationError(
+                    message="finger pull radius is too small for practical use",
+                    field="finger_pull_radius",
+                    value=config.finger_pull_radius,
+                    minimum=MIN_FINGER_PULL_RADIUS,
+                )
+            )
+
     return errors
+
+
+def validate_finger_pull_warnings(config: ContainerConfig) -> list[ValidationError]:
+    """Return non-blocking warnings about finger pull configuration.
+
+    These do not prevent generation – wall cut-through and depth clamping
+    are by design.
+    """
+    warnings: list[ValidationError] = []
+
+    if config.finger_pull_radius <= 0:
+        return warnings
+
+    if config.finger_pull_radius > config.outer_wall:
+        warnings.append(
+            ValidationError(
+                message=(
+                    "finger pull radius exceeds outer wall thickness – "
+                    "scoop will cut through the entire wall"
+                ),
+                field="finger_pull_radius",
+                value=config.finger_pull_radius,
+                minimum=config.outer_wall,
+            )
+        )
+
+    for idx, spec in _iter_resolved_specs(config):
+        effective_pull = spec.finger_pull if spec.finger_pull is not None else True
+        if not effective_pull:
+            continue
+        if config.finger_pull_radius > spec.depth:
+            warnings.append(
+                ValidationError(
+                    message=(
+                        f"finger pull radius ({config.finger_pull_radius:.1f} mm) "
+                        f"exceeds cavity depth ({spec.depth:.1f} mm) – will be clamped"
+                    ),
+                    field=f"cavities[{idx}].finger_pull",
+                    value=config.finger_pull_radius,
+                    minimum=spec.depth,
+                )
+            )
+
+    return warnings
 
 
 def validate_placement(

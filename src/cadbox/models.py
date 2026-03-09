@@ -70,6 +70,10 @@ class CavitySpec(BaseModel):
         ge=0,
         description="Fillet radius for the cavity top opening edge (mm). Overrides container-level cavity_fillet_top.",
     )
+    finger_pull: Optional[bool] = Field(
+        default=None,
+        description="Override global finger pull. None = follow global, False = disable, True = enable.",
+    )
     count: int = Field(default=1, ge=1, description="Repeat this cavity N times for the packer")
     grid: Optional[tuple[int, int]] = Field(
         default=None,
@@ -127,6 +131,10 @@ class CavityTemplate(BaseModel):
         ge=0,
         description="Fillet radius for the cavity top opening edge (mm). Overrides container-level cavity_fillet_top.",
     )
+    finger_pull: Optional[bool] = Field(
+        default=None,
+        description="Override global finger pull. None = follow global, False = disable, True = enable.",
+    )
 
     @model_validator(mode="after")
     def _validate_geometry(self) -> "CavityTemplate":
@@ -154,6 +162,10 @@ class CavityRef(BaseModel):
         default=None,
         ge=0,
         description="Override cavity top fillet radius (mm); None keeps template/container default.",
+    )
+    finger_pull: Optional[bool] = Field(
+        default=None,
+        description="Override global finger pull. None = follow global, False = disable, True = enable.",
     )
     count: int = Field(default=1, ge=1, description="Repeat this cavity N times for the packer")
     grid: Optional[tuple[int, int]] = Field(
@@ -221,6 +233,16 @@ class ContainerConfig(BaseModel):
     layout: Layout = Field(
         default=Layout.packed,
         description="Cavity layout strategy: 'packed' (tight), 'centered' (centered group), 'even' (equal spacing)",
+    )
+
+    # -- Finger pulls -------------------------------------------------------
+    finger_pull_radius: float = Field(
+        default=0.0, ge=0,
+        description="Finger pull scoop radius in mm. 0 = disabled.",
+    )
+    finger_pull_width_pct: float = Field(
+        default=0.5, gt=0, le=1.0,
+        description="Scoop length as a fraction of the cavity's wide dimension (0-1).",
     )
 
     # -- Stacking -----------------------------------------------------------
@@ -310,6 +332,7 @@ class ContainerConfig(BaseModel):
             diameter=tmpl.diameter,
             depth=ref.depth if ref.depth is not None else tmpl.depth,
             fillet_top=ref.fillet_top if ref.fillet_top is not None else tmpl.fillet_top,
+            finger_pull=ref.finger_pull if ref.finger_pull is not None else tmpl.finger_pull,
             count=ref.count,
             grid=ref.grid,
         )

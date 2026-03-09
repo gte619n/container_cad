@@ -58,9 +58,18 @@ src/cadbox/
 - **CavitySpec vs CavityRef**: Cavities can be inline specs or references to named templates. `ContainerConfig.resolve_cavity()` expands refs. `count` and `grid` are expanded to individual placements in the packer.
 - **Discriminated union**: `CavityEntry = Union[CavitySpec, CavityRef]` uses Pydantic's `union_mode="left_to_right"` — CavitySpec is tried first (has `shape` field), CavityRef second (has `template` field).
 
+## Finger Pulls
+
+Configurable finger pull scoops on cavity edges for grip access. Controlled by:
+- `finger_pull_radius` (float, default 0 = disabled): Scoop radius in mm. Also defines vertical depth (clamped to cavity depth).
+- `finger_pull_width_pct` (float, default 0.5): Scoop length as fraction of cavity's wide dimension.
+- Per-cavity `finger_pull` (Optional[bool]): Override global. None = follow global, False = disable.
+
+Scoops are half-cylinders placed on both sides of the cavity's narrow dimension, offset `rib_thickness/2` into the rib. They scallop into both the cavity opening and the rib/wall, cutting through to exterior on outer walls. Circular cavities get scoops on +Y/-Y. Adjacent scoops merge naturally via CSG overlap.
+
 ## Validation Constants (0.4mm nozzle)
 
-Defined in `validator.py`: MIN_WALL=1.2mm, MIN_RIB=1.2mm, MIN_FLOOR=0.8mm, MIN_FILLET=0.5mm, MIN_CAVITY=2.0mm. Post-packing validation uses 0.01mm float tolerance.
+Defined in `validator.py`: MIN_WALL=1.2mm, MIN_RIB=1.2mm, MIN_FLOOR=0.8mm, MIN_FILLET=0.5mm, MIN_CAVITY=2.0mm, MIN_FINGER_PULL_RADIUS=3.0mm. Post-packing validation uses 0.01mm float tolerance.
 
 ## Dependencies
 

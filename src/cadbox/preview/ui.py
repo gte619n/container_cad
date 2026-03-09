@@ -406,6 +406,20 @@ HTML_TEMPLATE = """\
       </div>
     </div>
 
+    <!-- Finger Pulls -->
+    <div class="section collapsed" id="finger-pull-section">
+      <div class="section-header" onclick="toggleSection(this)">
+        Finger Pulls <span class="chevron">&#x25BC;</span>
+      </div>
+      <div class="section-body">
+        <p style="font-size:11px;color:var(--text-dim);margin-bottom:8px;">Set radius &gt; 0 to enable finger pull scoops on cavity edges.</p>
+        <div class="row">
+          <div><label>Radius (mm)</label><input type="number" id="fp-radius" value="0" step="0.5" min="0" max="20"></div>
+          <div><label>Width %</label><input type="number" id="fp-width-pct" value="50" step="5" min="10" max="100"></div>
+        </div>
+      </div>
+    </div>
+
     <!-- Templates -->
     <div class="section">
       <div class="section-header" onclick="toggleSection(this)">
@@ -699,6 +713,8 @@ function buildConfig() {
     outer_fillet_lower: val('box-fillet-lower'),
     cavity_fillet_top: val('box-cavity-fillet'),
     layout: sval('box-layout'),
+    finger_pull_radius: val('fp-radius'),
+    finger_pull_width_pct: val('fp-width-pct') / 100,
     templates: templates.map(t => {
       const obj = { name: t.name, shape: t.shape, depth: t.depth };
       if (t.shape === 'rect') { obj.width = t.width; obj.length = t.length; }
@@ -722,6 +738,7 @@ function buildConfig() {
         const obj = { template: c.template };
         if (c.depth) obj.depth = c.depth;
         if (c.fillet_top > 0) obj.fillet_top = c.fillet_top;
+        if (c.finger_pull === false) obj.finger_pull = false;
         if (c.grid) { obj.grid = c.grid; }
         else if (c.count > 1) { obj.count = c.count; }
         return obj;
@@ -730,6 +747,7 @@ function buildConfig() {
       if (c.shape === 'rect') { obj.width = c.width; obj.length = c.length; }
       if (c.shape === 'circle') { obj.diameter = c.diameter; }
       if (c.fillet_top > 0) obj.fillet_top = c.fillet_top;
+      if (c.finger_pull === false) obj.finger_pull = false;
       if (c.grid) { obj.grid = c.grid; }
       else if (c.count > 1) { obj.count = c.count; }
       return obj;
@@ -758,6 +776,10 @@ function loadConfigIntoUI(config) {
   document.getElementById('box-fillet-lower').value = config.outer_fillet_lower ?? 0;
   document.getElementById('box-cavity-fillet').value = config.cavity_fillet_top ?? 0;
   document.getElementById('box-layout').value = config.layout || 'packed';
+
+  // Finger Pulls
+  document.getElementById('fp-radius').value = config.finger_pull_radius ?? 0;
+  document.getElementById('fp-width-pct').value = (config.finger_pull_width_pct ?? 0.5) * 100;
 
   // Stacking
   document.getElementById('stacking-mode').value = config.stacking || 'none';
@@ -796,6 +818,7 @@ function loadConfigIntoUI(config) {
         template: c.template,
         depth: c.depth || null,
         fillet_top: c.fillet_top || 0,
+        finger_pull: c.finger_pull ?? null,
         count: c.count || 1,
         grid: c.grid || null,
       };
@@ -809,6 +832,7 @@ function loadConfigIntoUI(config) {
       diameter: c.diameter || 0,
       depth: c.depth,
       fillet_top: c.fillet_top || 0,
+      finger_pull: c.finger_pull ?? null,
       count: c.count || 1,
       grid: c.grid || null,
     };
@@ -893,6 +917,7 @@ function renderCavities() {
       const options = templateNames.map(n =>
         `<option value="${n}" ${c.template===n?'selected':''}>${n}</option>`
       ).join('');
+      const fpRefChecked = c.finger_pull === false ? '' : 'checked';
       card.innerHTML = `
         <div class="cavity-card-header">
           <span class="cavity-card-title">Ref: ${c.template}</span>
@@ -905,6 +930,9 @@ function renderCavities() {
         <div class="row">
           <div><label>Grid (cols,rows)</label><input type="text" value="${c.grid ? c.grid.join(',') : ''}" placeholder="e.g. 3,2" onchange="updateCavityGrid(${idx},this.value)"></div>
           <div><label>Depth Override</label><input type="number" value="${c.depth||''}" step="0.5" min="0" placeholder="default" onchange="updateCavity(${idx},'depth',this.value)"></div>
+        </div>
+        <div class="row">
+          <div><label style="display:inline"><input type="checkbox" ${fpRefChecked} onchange="cavities[${idx}].finger_pull=this.checked?null:false"> Finger Pull</label></div>
         </div>`;
     } else {
       const shapeFields = c.shape === 'circle'
@@ -926,6 +954,7 @@ function renderCavities() {
         </div>
         <div class="row">
           <div><label>Fillet Top</label><input type="number" value="${c.fillet_top||0}" step="0.1" min="0" onchange="updateCavity(${idx},'fillet_top',this.value)"></div>
+          <div><label style="display:inline"><input type="checkbox" ${c.finger_pull === false ? '' : 'checked'} onchange="cavities[${idx}].finger_pull=this.checked?null:false"> Finger Pull</label></div>
         </div>`;
     }
     list.appendChild(card);
@@ -942,6 +971,7 @@ function addCavity(shape) {
     diameter: 20,
     depth: 10,
     fillet_top: 0,
+    finger_pull: null,
     count: 1,
     grid: null,
   });
@@ -959,6 +989,7 @@ function addCavityRef() {
     template: templates[0].name,
     depth: null,
     fillet_top: 0,
+    finger_pull: null,
     count: 1,
     grid: null,
   });

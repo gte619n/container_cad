@@ -392,6 +392,17 @@ def generate_gridfinity(config: ContainerConfig, packing: PackingResult) -> cq.W
         )
         result = _cut_cavity(result, adjusted, config.fillet_radius, config.cavity_fillet_top)
 
+    # -- 8. Finger pull scoops --
+    if config.finger_pull_radius > 0:
+        z_top = h - _GF_LIP_HEIGHT  # top of the bin body, below the lip
+        for placement in packing.placements:
+            adjusted = PlacedCavity(
+                x=placement.x - inner_w / 2,
+                y=placement.y - inner_l / 2,
+                spec=placement.spec,
+            )
+            result = _cut_finger_pulls(result, adjusted, config, z_top)
+
     return result
 
 
@@ -487,7 +498,20 @@ def generate(config: ContainerConfig, packing: PackingResult) -> cq.Workplane:
         result = _cut_cavity(result, adjusted, config.fillet_radius, config.cavity_fillet_top)
 
     # ------------------------------------------------------------------
-    # Step 5: Stacking features
+    # Step 5: Finger pull scoops
+    # ------------------------------------------------------------------
+    if config.finger_pull_radius > 0:
+        z_top = h
+        for placement in packing.placements:
+            adjusted = PlacedCavity(
+                x=placement.x - inner_w / 2,
+                y=placement.y - inner_l / 2,
+                spec=placement.spec,
+            )
+            result = _cut_finger_pulls(result, adjusted, config, z_top)
+
+    # ------------------------------------------------------------------
+    # Step 6: Stacking features
     # ------------------------------------------------------------------
     if config.stacking in (StackingMode.receiver, StackingMode.both):
         result = _add_stacking_receiver(result, config)
@@ -602,6 +626,132 @@ def _cut_cavity(
                 pass  # skip if geometry cannot support the fillet
 
     return result
+
+
+# ---------------------------------------------------------------------------
+# Finger pull scoops
+# ---------------------------------------------------------------------------
+
+
+def _build_finger_pull_tool(
+    radius: float,
+    length: float,
+) -> cq.Workplane:
+    """Build a half-cylinder (bottom half) for use as a finger pull CSG tool.
+
+    The cylinder axis runs along the X axis, centred at the origin.
+    The flat face is at Z=0 (top), the scoop extends downward to Z=-radius.
+
+    Args:
+        radius: Scoop radius (mm).
+        length: Scoop length along the X axis (mm).
+
+    Returns:
+        A CadQuery solid representing the bottom half of a cylinder.
+    """
+    # Full cylinder along X axis
+    cylinder = (
+        cq.Workplane("YZ")
+        .circle(radius)
+        .extrude(length)
+        .translate((-length / 2, 0, 0))
+    )
+    # Box to cut away the top half (Z > 0)
+    clip = (
+        cq.Workplane("XY")
+        .box(length + 2, radius * 2 + 2, radius + 1, centered=(True, True, False))
+    )
+    return cylinder.cut(clip)
+
+
+def _cut_finger_pulls(
+    solid: cq.Workplane,
+    placement: PlacedCavity,
+    config: ContainerConfig,
+    z_top: float,
+) -> cq.Workplane:
+    """Cut finger pull scoops into *solid* for the given cavity placement.
+
+    Places two scoops on opposite sides of the cavity's narrow dimension.
+    Each scoop is a half-cylinder whose axis sits at z_top, offset into the
+    rib by ``rib_thickness / 2`` from the cavity edge.
+
+    Args:
+        solid:     The workplane/solid to cut into.
+        placement: Cavity position (coords in CadQuery XY-centred space).
+        config:    Container configuration (for radius, width_pct, rib).
+        z_top:     Z coordinate of the container's top surface.
+
+    Returns:
+        The modified solid with finger pull scoops removed.
+    """
+    spec = placement.spec
+
+    # Determine if this cavity gets finger pulls
+    effective_pull = spec.finger_pull if spec.finger_pull is not None else True
+    if not effective_pull:
+        return solid
+
+    radius = config.finger_pull_radius
+    if radius <= 0:
+        return solid
+
+    # Clamp radius to cavity depth
+    effective_radius = min(radius, spec.depth)
+    if effective_radius <= 0:
+        return solid
+
+    cx = placement.x
+    cy = placement.y
+    rib_offset = config.rib_thickness / 2.0
+
+    # Determine narrow vs wide dimension and scoop axis
+    if spec.shape == CavityShape.circle:
+        # Circle: scoops on +Y and -Y sides, scoop runs along X
+        wide_dim = spec.diameter
+        narrow_half = spec.diameter / 2.0
+        # Scoop positions: two scoops offset into the rib from the Y-edges
+        scoop_positions = [
+            # (scoop_center_x, scoop_center_y, rotation_angle_degrees)
+            (cx, cy + narrow_half + rib_offset, 0),  # +Y side
+            (cx, cy - narrow_half - rib_offset, 0),  # -Y side
+        ]
+    elif spec.shape == CavityShape.rect:
+        cav_w = spec.width
+        cav_l = spec.length
+        if cav_w <= cav_l:
+            # Narrow = width (X), wide = length (Y). Scoops on +X/-X sides.
+            wide_dim = cav_l
+            narrow_half = cav_w / 2.0
+            scoop_positions = [
+                (cx + narrow_half + rib_offset, cy, 90),  # +X side, rotated
+                (cx - narrow_half - rib_offset, cy, 90),  # -X side, rotated
+            ]
+        else:
+            # Narrow = length (Y), wide = width (X). Scoops on +Y/-Y sides.
+            wide_dim = cav_w
+            narrow_half = cav_l / 2.0
+            scoop_positions = [
+                (cx, cy + narrow_half + rib_offset, 0),  # +Y side
+                (cx, cy - narrow_half - rib_offset, 0),  # -Y side
+            ]
+    else:
+        return solid
+
+    scoop_length = wide_dim * config.finger_pull_width_pct
+    if scoop_length <= 0:
+        return solid
+
+    tool = _build_finger_pull_tool(effective_radius, scoop_length)
+
+    for sx, sy, angle in scoop_positions:
+        positioned = tool
+        if angle != 0:
+            positioned = positioned.rotate((0, 0, 0), (0, 0, 1), angle)
+        positioned = positioned.translate((sx, sy, z_top))
+        solid = solid.cut(positioned)
+
+    return solid
 
 
 # ---------------------------------------------------------------------------

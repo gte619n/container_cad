@@ -1,0 +1,19 @@
+{
+  "width": 100,
+  "length": 80,
+  "height": 25,
+  "outer_wall": 2.0,
+  "rib_thickness": 1.6,
+  "floor_thickness": 1.2,
+  "fillet_radius": 1.0,
+  "outer_fillet_upper": 1.5,
+  "outer_fillet_lower": 2.0,
+  "cavity_fillet_top": 0.8,
+  "finger_pull_radius": 8,
+  "finger_pull_width_pct": 0.5,
+  "cavities": [
+    {"shape": "rect", "width": 30, "length": 20, "depth": 20},
+    {"shape": "rect", "width": 15, "length": 40, "depth": 15, "finger_pull": false},
+    {"shape": "circle", "diameter": 25, "depth": 20}
+  ]
+}
